@@ -1,0 +1,287 @@
+{% extends 'layouts/blank.html' %}
+
+{% block content %}
+
+<wrapper class="block max-w-2xl mx-auto my-10 px-6">
+    {% if chat_group.groupchat_name  %}
+    <div class="flex justify-between">
+    <h2>{{ chat_group.groupchat_name  }}</h2>
+        {% if user == chat_group.admin %}
+        <a href="{% url 'edit-chatroom' chat_group.group_name %}">
+        <div class="p-2 bg-gray-200 hover:bg-blue-600 rounded-lg group">
+            <svg class="fill-gray-500 group-hover:fill-white" width="16" height="16">
+                <path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm.176 4.823L9.75 4.81l-6.286 6.287a.253.253 0 0 0-.064.108l-.558 1.953 1.953-.558a.253.253 0 0 0 .108-.064Zm1.238-3.763a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354Z"></path>
+            </svg>
+            </div>
+            </a>
+        {% endif %}
+        </div>
+    {% endif %}
+
+    <div id="chat_window" class="h-[45rem] flex flex-col bg-gray-800 rounded-2xl shadow-2xl relative p-1">
+        <div class="flex justify-center text-emerald-400 bg-gray-800 p-2 sticky top-0 z-10">
+            {% if other_user %}
+            <div id="online-icon" class = "grey-dot absolute top-2 left-2" ></div>
+
+            <a href="{% url 'profile' other_user.username %}">
+                <div class="flex items-center gap-2 p-4 sticky top-0 z-0" >
+                    <img class = "w-10 h-10 rounded full object-cover" src="{{other_user.profile.avatar}}" >
+                    <div>
+                        <span class="font-bold text-white">{{other_user.profile.name}}</span>
+                        <span class="text-sm font-light text-gray-400">@{{other_user.username}}</span>
+                    </div>
+                </div>
+            </a>
+            {% elif chat_group.groupchat_name  %}
+            <ul id = "groupchat-members" class = "flex gap-4">
+                {% for member in chat_group.members.all %}
+                <li>
+                        <a href="{% url 'profile' member.username %}" class="flex flex-col text-gray-400 items-center justify-centerw-20 gap-2">
+                            <img src="{{member.profile.avatar}}" class="w-14 h-14 rounded-full object-cover" >
+                            {{ member.profile.name | slice:":10" }}
+
+                        </a>
+
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div id="online-icon"></div>
+            <span id="online-count" class="pr-1"></span>online
+            {% endif %}
+        </div>
+        <div id='chat_container' class="overflow-y-auto grow">
+            <ul id='chat_messages' class="flex flex-col justify-end gap-2 p-4">
+                {% for message in  chat_messages reversed %}
+                {% include 'a_rtchat/chat_message.html' %}
+                {% endfor %}
+            </ul>
+        </div>
+        <div class="sticky bottom-0 z-10 p-2 bg-gray-800">
+            <div class="flex items-center rounded-xl px-2 py-2">
+                <form id="chat_message_form" method='POST' class="w-full" hx-ext="ws" ws-connect = "/ws/chatroom/{{ chatroom_name }}" ws-send  _="on htmx:wsAfterSend reset() me">
+                    {% csrf_token %}
+                    {{form}}
+                </form>
+            </div>
+        </div>
+    </div>
+    {% if chat_group.members.exists %}
+    <!-- <a href="{% url 'chatroom-leave' chat_group.group_name %}">Leave</a> -->
+    {% endif %}
+</wrapper>
+
+
+{% endblock %}
+{% block javascript %}
+<script>
+function scrollToBottom(){
+    const container = document.getElementById('chat_container');
+    container.scrollTop = container.scrollHeight
+}
+
+let messageQueue = [];
+let socketOpened = false;
+// Track message IDs that have been added/updated in the DOM by this client
+let renderedMessageIds = new Set(); 
+
+// Only declare this ONCE
+const chatSocket = new WebSocket(
+    'ws://' + window.location.host + '/ws/chatroom/{{ chatroom_name }}'
+);
+
+console.log("WebSocket connecting to:", 'ws://' + window.location.host + '/ws/chatroom/{{ chatroom_name }}');
+
+chatSocket.onopen = function() {
+    socketOpened = true;
+    console.log("WebSocket connection opened.");
+    // Send any queued messages
+    messageQueue.forEach(msg => {
+        console.log("Sending queued message on open:", msg);
+        chatSocket.send(msg);
+    });
+    messageQueue = [];
+    // Observe messages already in DOM on connect
+    observeAllMessages();
+};
+
+chatSocket.onclose = function(event) {
+    console.log("WebSocket connection closed:", event);
+    socketOpened = false;
+};
+
+chatSocket.onerror = function(error) {
+    console.error("WebSocket error:", error);
+    socketOpened = false;
+};
+
+// Handle incoming WebSocket messages (expecting JSON with 'type' and 'html')
+chatSocket.onmessage = function(event) {
+    try {
+        const data = JSON.parse(event.data);
+        const messageType = data.type;
+        const messageHtml = data.html;
+        const messageId = data.message_id; // Present for chat_message and chat_message_status
+
+        if (messageType === 'chat_message') {
+            // Handle new messages or updates to existing messages
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(messageHtml, 'text/html');
+            const newMessageElement = doc.body.firstElementChild;
+
+            if (newMessageElement && messageId) {
+                let existingMessageElement = document.getElementById('message-' + messageId);
+
+                if (existingMessageElement) {
+                    // Replace the existing message HTML to update status/content
+                    existingMessageElement.replaceWith(newMessageElement);
+                    console.log(`[WS MESSAGE] Replaced message ${messageId}`);
+                } else {
+                    // Append the new message HTML if it doesn't exist
+                    const chatMessagesContainer = document.querySelector('#chat_messages');
+                    if (chatMessagesContainer) {
+                         chatMessagesContainer.appendChild(newMessageElement);
+                         console.log(`[WS MESSAGE] Appended new message ${messageId}`);
+                    }
+                }
+
+                // After adding/replacing, ensure it's marked as rendered and observed
+                renderedMessageIds.add(messageId);
+                const messageInDom = document.getElementById('message-' + messageId);
+                 if (messageInDom) {
+                     // Re-observe the message for read events
+                     observer.unobserve(messageInDom); // Remove old observer if any
+                     observer.observe(messageInDom);
+                     console.log(`[OBSERVER] Re-attached observer for message ${messageId}`);
+                 }
+
+                scrollToBottom();
+            }
+        } else if (messageType === 'chat_message_status') {
+             // Handle status updates for existing messages
+             const parser = new DOMParser();
+             const doc = parser.parseFromString(messageHtml, 'text/html');
+             const updatedMessageElement = doc.body.firstElementChild;
+
+             if (updatedMessageElement && messageId) {
+                 let existingMessageElement = document.getElementById('message-' + messageId);
+                 if (existingMessageElement) {
+                     // Replace the existing message HTML to update status
+                     existingMessageElement.replaceWith(updatedMessageElement);
+                     console.log(`[WS STATUS] Updated status for message ${messageId} to ${data.status}`);
+                      // After updating, ensure it's marked as rendered and observed
+                     renderedMessageIds.add(messageId);
+                     const messageInDom = document.getElementById('message-' + messageId);
+                      if (messageInDom) {
+                          // Re-observe the message if its read status might have changed
+                          observer.unobserve(messageInDom); // Remove old observer if any
+                          observer.observe(messageInDom);
+                          console.log(`[OBSERVER] Re-attached observer for message ${messageId} after status update`);
+                      }
+                 }
+             }
+        } else if (messageType === 'online_count') {
+            // Handle online count updates
+            const onlineCountContainer = document.getElementById('online-count');
+            if (onlineCountContainer) {
+                 const parser = new DOMParser();
+                 const doc = parser.parseFromString(messageHtml, 'text/html');
+                 const updatedOnlineCountElement = doc.body.firstElementChild;
+                 if(updatedOnlineCountElement){
+                     onlineCountContainer.replaceWith(updatedOnlineCountElement);
+                      console.log("[WS ONLINE] Updated online count");
+                 }
+            }
+             // Also update the online dots for group chat members if they are displayed
+             const groupMembersContainer = document.getElementById('groupchat-members');
+             if (groupMembersContainer && data.html) {
+                  const parser = new DOMParser();
+                  const doc = parser.parseFromString(messageHtml, 'text/html');
+                  const updatedGroupMembers = doc.body.querySelector('#groupchat-members');
+                  if(updatedGroupMembers){
+                     groupMembersContainer.replaceWith(updatedGroupMembers);
+                      console.log("[WS ONLINE] Updated group members online status dots");
+                  }
+
+             }
+
+
+        }
+
+    } catch (e) {
+        console.error("Error parsing WebSocket message:", e, "Data:", event.data);
+    }
+};
+
+// Intersection Observer to detect when a message is visible for marking as read
+const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        // Only send read event if the message is visible, hasn't been marked as read,
+        // and is not a message sent by the current user.
+        const messageElement = entry.target;
+        const messageId = messageElement.dataset.messageId;
+        const isRead = messageElement.dataset.read === 'true';
+        const isMyMessage = messageElement.classList.contains('flex-justify-end'); // Assuming author's messages are justified to the end
+
+        if (entry.isIntersecting && !isRead && !isMyMessage) {
+            if (messageId) {
+                const msg = JSON.stringify({
+                    'read_message_id': messageId
+                });
+                if (socketOpened && chatSocket.readyState === WebSocket.OPEN) {
+                    console.log("Sending read event for message:", messageId);
+                    chatSocket.send(msg);
+                    // Mark message element in DOM as read immediately after sending the event
+                    messageElement.dataset.read = 'true';
+                    messageElement.classList.add('read');
+                    // We can unobserve after sending the read event, as we only need to mark it read once.
+                    observer.unobserve(messageElement);
+                    console.log("[OBSERVER] Stopped observing message after sending read event:", messageId);
+                } else {
+                    console.log("Socket not open, queueing read event for message:", messageId);
+                    messageQueue.push(msg);
+                }
+            }
+        }
+    });
+}, { threshold: 1.0 }); // Use a threshold of 1.0 to ensure the whole message is visible
+
+// Attach observer to all messages currently in the DOM
+function observeAllMessages() {
+    console.log("Observing all chat messages initially.");
+    document.querySelectorAll('.chat-message').forEach(msg => {
+        // Only observe messages that haven't been marked as read yet and aren't sent by the current user
+        if(msg.dataset.read !== 'true' && !msg.classList.contains('flex-justify-end')){
+            observer.observe(msg);
+        }
+    });
+    console.log("Finished observing initial chat messages.");
+}
+
+// Initial setup on page load
+// We will call observeAllMessages on socket open, but also need to process initial messages
+// This function will process messages already in the DOM when the page loads.
+function processInitialMessages(){
+     console.log("Processing initial messages in DOM.");
+     document.querySelectorAll('.chat-message').forEach(msg => {
+         const messageId = msg.dataset.messageId;
+         if (messageId && !renderedMessageIds.has(messageId)) {
+              renderedMessageIds.add(messageId);
+              // If the socket is already open, and the message is not by the current user and not read,
+              // we can directly observe it. Otherwise, observation will happen on socket open.
+             const isRead = msg.dataset.read === 'true';
+             const isMyMessage = msg.classList.contains('flex-justify-end');
+             if(socketOpened && chatSocket.readyState === WebSocket.OPEN && !isRead && !isMyMessage){
+                 observer.observe(msg);
+             }
+         }
+     });
+     console.log("Finished processing initial messages.");
+}
+
+// Call this on page load to populate renderedMessageIds and potentially start observing
+processInitialMessages();
+
+// The observer is attached on socket open by observeAllMessages()
+</script>
+{% endblock %}

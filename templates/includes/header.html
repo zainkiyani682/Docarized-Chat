@@ -1,0 +1,87 @@
+{% load static %}
+<header class="flex items-center justify-between bg-gray-800 h-20 px-8 text-white sticky top-0 z-40">
+    <div>
+        <a class="flex items-center gap-2" href="/">
+            <img class="h-6" src="{% static 'images/logo.svg' %}" alt="Logo"/>
+            <span class="text-lg font-bold">Real Time Chat</span>
+        </a>
+    </div>
+    <nav class="block relative">
+        <ul class="navitems flex items-center justify-center h-full">
+            {% if request.user.is_authenticated %}
+           <li x-data="{ dropdownChatOpen: false }" class="relative">
+                        <a href="#" @click.prevent="dropdownChatOpen = !dropdownChatOpen" class="flex items-center space-x-1">
+                            <span>Chat</span>
+                            <img x-bind:class="dropdownChatOpen ? 'rotate-180 duration-300' : 'duration-300'" class="w-4 h-4 transform transition-transform" src="https://img.icons8.com/small/32/ffffff/expand-arrow.png" alt="Dropdown Icon">
+                        </a>
+
+                        <div x-show="dropdownChatOpen" x-cloak 
+                            class="absolute right-0 mt-2 bg-white text-black shadow-md rounded-md z-50"
+                            x-transition:enter="transition ease-out duration-200"
+                            x-transition:enter-start="opacity-0 translate-y-2"
+                            x-transition:enter-end="opacity-100 translate-y-0"
+                            x-transition:leave="transition ease-in duration-150"
+                            x-transition:leave-start="opacity-100 translate-y-0"
+                            x-transition:leave-end="opacity-0 translate-y-2">
+                            
+                            <ul class="hoverlist [&>li>a]:justify-end py-2 w-48">
+                                <li>
+                                    <a href="{% url 'home' %}" class="block px-4 py-2 hover:bg-gray-100">Public Chat</a>
+                                </li>
+                                {% for chatroom in user.chat_group.all %}
+                                {% if chatgroup.groupchat_name %}
+                                <li>
+                                    <a class = "leading-5 text-right" href="{% url 'chatroom' chatroom.group_name %}"></a>
+                                </li>
+                                {% endif %}
+                                {% endfor %}
+                                {% for chatroom in user.chat_group.all %}
+                                    {% if chatroom.is_private %}
+                                        {% for member in chatroom.members.all %}
+                                            {% if member != user %}
+                                                <li>
+                                                    <a href="{% url 'chatroom' chatroom.group_name %}" class="block px-4 py-2 hover:bg-gray-100">
+                                                        {{ member.profile.name }}
+                                                    </a>
+                                                </li>
+                                            {% endif %}
+                                        {% endfor %}
+                                    {% endif %}
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </li>
+
+            <li x-data="{ dropdownOpen: false }" class="relative">
+                <a @click="dropdownOpen = !dropdownOpen" @click.away="dropdownOpen = false" class="cursor-pointer select-none">
+                    <img class="h-8 w-8 rounded-full object-cover" src="{{ request.user.profile.avatar }}" alt="Avatar" />
+                    {{ request.user.profile.name }}
+                    <img x-bind:class="dropdownOpen && 'rotate-180 duration-300'" class="w-4" src="https://img.icons8.com/small/32/ffffff/expand-arrow.png" alt="Dropdown" />
+                </a>
+                <div x-show="dropdownOpen" x-cloak class="absolute right-0 bg-white text-black shadow rounded-lg w-40 p-2 z-20"
+                x-transition:enter="duration-300 ease-out"
+                x-transition:enter-start="opacity-0 -translate-y-5 scale-90"
+                x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+                >
+                    <ul class="hoverlist [&>li>a]:justify-end">
+                        <li><a href="{% url 'profile' %}">My Profile</a></li>
+                        <li><a href="{% url 'profile-edit' %}">Edit Profile</a></li>
+                        <li><a href="{% url 'new-groupchat' %}">Create Chat</a></li>
+                        <li><a href="{% url 'profile-settings' %}">Settings</a></li>
+                        <li>
+                            <form method="post" action="{% url 'account_logout' %}" class="inline">
+                                {% csrf_token %}
+                                <button type="submit" class="w-full text-left px-4 py-2 hover:bg-gray-100">Log Out</button>
+                            </form>
+                        </li>
+                    </ul>
+                </div>
+            </li>
+            
+            {% else %}
+            <li><a href="{% url 'account_login' %}" class="hover:text-gray-300 transition-colors duration-200">Login</a></li>
+            <li><a href="{% url 'account_signup' %}?next={% url 'profile-onboarding' %}" class="hover:text-gray-300 transition-colors duration-200">Signup</a></li>
+            {% endif %}
+        </ul>
+    </nav>
+</header>
